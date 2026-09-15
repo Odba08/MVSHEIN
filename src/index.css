@@ -1,0 +1,219 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import "tailwindcss";
+
+:root {
+  --font-heading: 'Outfit', sans-serif;
+  --font-body: 'Plus Jakarta Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* Palette: Vibrant Fucsia & Pink */
+  --bg-main: #FDF2F8;
+  --primary-fuchsia: #D946EF;
+  --primary-pink: #EC4899;
+  --fuchsia-gradient: linear-gradient(135deg, #E879F9 0%, #D946EF 45%, #C026D3 100%);
+  --pink-gradient: linear-gradient(135deg, #F472B6 0%, #EC4899 50%, #DB2777 100%);
+}
+
+body {
+  font-family: var(--font-body);
+  background-color: #FDF2F8;
+  color: #1E293B;
+  min-height: 100vh;
+  background-image: 
+    radial-gradient(at 0% 0%, rgba(217, 70, 239, 0.22) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(244, 114, 182, 0.25) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(236, 72, 153, 0.18) 0px, transparent 50%),
+    radial-gradient(at 100% 100%, rgba(192, 38, 211, 0.2) 0px, transparent 50%);
+  background-attachment: fixed;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-heading);
+}
+
+/* Glass & Aesthetic Cards in Fucsia & Rosado */
+.glass-card {
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1.5px solid rgba(217, 70, 239, 0.25);
+  border-radius: 1.25rem;
+  padding: 1.35rem;
+  box-shadow: 0 10px 25px -5px rgba(217, 70, 239, 0.12), 0 4px 10px -2px rgba(0, 0, 0, 0.03);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glass-card:hover {
+  background: #FFFFFF;
+  border-color: rgba(217, 70, 239, 0.55);
+  transform: translateY(-2px);
+  box-shadow: 0 14px 30px -5px rgba(217, 70, 239, 0.2);
+}
+
+.glass-modal {
+  background: rgba(255, 255, 255, 0.98);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1.5px solid rgba(217, 70, 239, 0.35);
+  border-radius: 1.5rem;
+  box-shadow: 0 25px 50px -12px rgba(217, 70, 239, 0.3);
+}
+
+.stat-card {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(12px);
+  border: 1.5px solid rgba(217, 70, 239, 0.2);
+  border-radius: 1.15rem;
+  padding: 1.2rem;
+  box-shadow: 0 4px 15px -2px rgba(217, 70, 239, 0.08);
+  transition: all 0.2s ease;
+}
+
+.stat-card:hover {
+  border-color: rgba(217, 70, 239, 0.45);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px -3px rgba(217, 70, 239, 0.18);
+}
+
+/* Fucsia & Pink Buttons */
+.btn-primary {
+  background: linear-gradient(135deg, #E879F9 0%, #D946EF 45%, #C026D3 100%);
+  color: #ffffff;
+  font-weight: 700;
+  padding: 0.65rem 1.3rem;
+  border-radius: 0.85rem;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 14px rgba(217, 70, 239, 0.4);
+}
+
+.btn-primary:hover {
+  opacity: 0.95;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 22px rgba(217, 70, 239, 0.5);
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.95);
+  color: #475569;
+  font-weight: 600;
+  padding: 0.65rem 1.2rem;
+  border-radius: 0.85rem;
+  border: 1.5px solid rgba(217, 70, 239, 0.3);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  transition: all 0.2s ease;
+}
+
+.btn-secondary:hover {
+  background: #FDF2F8;
+  color: #C026D3;
+  border-color: rgba(217, 70, 239, 0.6);
+}
+
+/* Inputs */
+.input-field {
+  width: 100%;
+  background: #FFFFFF;
+  border: 1.5px solid rgba(217, 70, 239, 0.3);
+  border-radius: 0.85rem;
+  padding: 0.7rem 1rem;
+  color: #1E293B;
+  font-size: 0.875rem;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.input-field:focus {
+  border-color: #D946EF;
+  box-shadow: 0 0 0 3.5px rgba(217, 70, 239, 0.2);
+}
+
+.input-field::placeholder {
+  color: #94A3B8;
+}
+
+.select-field {
+  width: 100%;
+  background: #FFFFFF;
+  border: 1.5px solid rgba(217, 70, 239, 0.3);
+  border-radius: 0.85rem;
+  padding: 0.7rem 1rem;
+  color: #1E293B;
+  font-size: 0.875rem;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.select-field:focus {
+  border-color: #D946EF;
+  box-shadow: 0 0 0 3.5px rgba(217, 70, 239, 0.2);
+}
+
+/* Status Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.badge-pending {
+  background: #F1F5F9;
+  color: #64748B;
+  border: 1px solid #E2E8F0;
+}
+
+.badge-review {
+  background: #FFFBEB;
+  color: #B45309;
+  border: 1px solid #FDE68A;
+}
+
+.badge-shipped {
+  background: #E0F2FE;
+  color: #0284C7;
+  border: 1px solid #BAE6FD;
+}
+
+.badge-arrived {
+  background: #FEF3C7;
+  color: #D97706;
+  border: 1px solid #FDE68A;
+}
+
+.badge-delivered {
+  background: #DCFCE7;
+  color: #16A34A;
+  border: 1px solid #BBF7D0;
+}
+
+.badge-operator {
+  background: #FDF4FF;
+  color: #C026D3;
+  border: 1px solid #F5D0FE;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  from { opacity: 0; transform: scale(0.98) translateY(6px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
