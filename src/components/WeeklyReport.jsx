@@ -2,7 +2,8 @@ import React, { useState, useMemo } from 'react';
 import { 
   Calendar, DollarSign, ShoppingCart, TrendingUp, 
   Download, Plus, Trash2, ArrowUpRight, ArrowDownRight, 
-  Heart, Sparkles, HelpCircle, Award, BookOpen, CheckCircle2 
+  Heart, Sparkles, HelpCircle, Award, BookOpen, CheckCircle2,
+  Mail, Store
 } from 'lucide-react';
 import { useAuth, USERS_CONFIG } from '../context/AuthContext';
 import { getISOWeekKey, exportFullAccountingExcel } from '../utils/excelExport';
@@ -16,10 +17,8 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
   const weeklyData = useMemo(() => {
     const map = {};
 
-    // Process Orders (only those visible to current user)
+    // Process Orders (with subCarts support)
     orders.forEach(ord => {
-      if (!canViewOperator(ord.operator)) return;
-      if (selectedOperator !== 'ALL' && ord.operator !== selectedOperator) return;
       const weekKey = getISOWeekKey(ord.date || new Date().toISOString().split('T')[0]);
       if (!map[weekKey]) {
         map[weekKey] = {
@@ -28,21 +27,66 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
           expenses: [],
           totalIncome: 0,
           totalCarts: 0,
+          totalStoreExpenses: 0,
+          totalGeneralExpenses: 0,
           totalExpenses: 0,
           netProfit: 0,
-          operatorCarts: { Francis: 0, Daily: 0, Ana: 0 }
+          operatorCarts: { Francis: 0, Daily: 0, Ana: 0 },
+          operatorStorePaid: { Francis: 0, Daily: 0, Ana: 0 }
         };
       }
-      map[weekKey].orders.push(ord);
-      map[weekKey].totalIncome += Number(ord.paidAmount || 0);
-      const count = Number(ord.cartsCount || 1);
-      map[weekKey].totalCarts += count;
-      if (ord.operator && map[weekKey].operatorCarts[ord.operator] !== undefined) {
-        map[weekKey].operatorCarts[ord.operator] += count;
+
+      const subCarts = Array.isArray(ord.subCarts) ? ord.subCarts : [];
+
+      if (subCarts.length > 0) {
+        let orderStorePaid = 0;
+        let visibleSubCartsCount = 0;
+
+        subCarts.forEach(sc => {
+          const scOp = sc.operator || ord.operator || 'Francis';
+          if (canViewOperator(scOp)) {
+            if (selectedOperator === 'ALL' || scOp === selectedOperator) {
+              if (map[weekKey].operatorCarts[scOp] !== undefined) {
+                map[weekKey].operatorCarts[scOp] += 1;
+              }
+              const paid = Number(sc.paidAmount || 0);
+              if (map[weekKey].operatorStorePaid[scOp] !== undefined) {
+                map[weekKey].operatorStorePaid[scOp] += paid;
+              }
+              visibleSubCartsCount += 1;
+            }
+          }
+          orderStorePaid += Number(sc.paidAmount || 0);
+        });
+
+        const isOrderVisible = canViewOperator(ord.operator) && (selectedOperator === 'ALL' || ord.operator === selectedOperator);
+        if (isOrderVisible || visibleSubCartsCount > 0) {
+          map[weekKey].orders.push(ord);
+          if (isOrderVisible) {
+            map[weekKey].totalIncome += Number(ord.paidAmount || 0);
+            map[weekKey].totalCarts += subCarts.length;
+            map[weekKey].totalStoreExpenses += orderStorePaid;
+          } else {
+            map[weekKey].totalCarts += visibleSubCartsCount;
+          }
+        }
+      } else {
+        // Fallback for orders without subCarts
+        if (canViewOperator(ord.operator)) {
+          if (selectedOperator === 'ALL' || ord.operator === selectedOperator) {
+            map[weekKey].orders.push(ord);
+            map[weekKey].totalIncome += Number(ord.paidAmount || 0);
+            const count = Number(ord.cartsCount || 1);
+            map[weekKey].totalCarts += count;
+            if (ord.operator && map[weekKey].operatorCarts[ord.operator] !== undefined) {
+              map[weekKey].operatorCarts[ord.operator] += count;
+            }
+          }
+        }
       }
     });
 
-    // Process Expenses (only if user has permission and is not daily)
+    // Process General Expenses
     if (currentUser?.id !== 'daily') {
       expenses.forEach(exp => {
         if (!canViewOperator(exp.operator)) return;
@@ -55,17 +99,21 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
             expenses: [],
             totalIncome: 0,
             totalCarts: 0,
+            totalStoreExpenses: 0,
+            totalGeneralExpenses: 0,
             totalExpenses: 0,
             netProfit: 0,
-            operatorCarts: { Francis: 0, Daily: 0, Ana: 0 }
+            operatorCarts: { Francis: 0, Daily: 0, Ana: 0 },
+            operatorStorePaid: { Francis: 0, Daily: 0, Ana: 0 }
           };
         }
         map[weekKey].expenses.push(exp);
-        map[weekKey].totalExpenses += Number(exp.amount || 0);
+        map[weekKey].totalGeneralExpenses += Number(exp.amount || 0);
       });
     }
 
     const list = Object.values(map).map(w => {
+      w.totalExpenses = w.totalStoreExpenses + w.totalGeneralExpenses;
       w.netProfit = w.totalIncome - w.totalExpenses;
       w.profitPerCart = w.totalCarts > 0 ? (w.netProfit / w.totalCarts) : 0;
       w.profitMargin = w.totalIncome > 0 ? ((w.netProfit / w.totalIncome) * 100) : 0;
@@ -78,12 +126,14 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
   // Overall Totals
   const overall = useMemo(() => {
     const totalIncome = weeklyData.reduce((acc, w) => acc + w.totalIncome, 0);
-    const totalExpenses = weeklyData.reduce((acc, w) => acc + w.totalExpenses, 0);
+    const totalStoreExpenses = weeklyData.reduce((acc, w) => acc + w.totalStoreExpenses, 0);
+    const totalGeneralExpenses = weeklyData.reduce((acc, w) => acc + w.totalGeneralExpenses, 0);
+    const totalExpenses = totalStoreExpenses + totalGeneralExpenses;
     const totalCarts = weeklyData.reduce((acc, w) => acc + w.totalCarts, 0);
     const netProfit = totalIncome - totalExpenses;
     const margin = totalIncome > 0 ? (netProfit / totalIncome) * 100 : 0;
     const avgPerCart = totalCarts > 0 ? (netProfit / totalCarts) : 0;
-    return { totalIncome, totalExpenses, totalCarts, netProfit, margin, avgPerCart };
+    return { totalIncome, totalStoreExpenses, totalGeneralExpenses, totalExpenses, totalCarts, netProfit, margin, avgPerCart };
   }, [weeklyData]);
 
   const [activeWeekKey, setActiveWeekKey] = useState(weeklyData[0]?.weekKey || null);
@@ -91,9 +141,6 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
 
   const allowedOperators = currentUser?.allowedOperators || ['Daily'];
 
-  // Operators to display in the Liquidación cards:
-  // If a specific operator is selected in the dropdown, only show that one!
-  // If 'ALL' is selected, show only the operators allowed for current user (e.g. Daily only sees Daily).
   const displayedOperatorsInPayroll = useMemo(() => {
     if (selectedOperator !== 'ALL') {
       return allowedOperators.filter(op => op === selectedOperator);
@@ -101,7 +148,7 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
     return allowedOperators;
   }, [selectedOperator, allowedOperators]);
 
-  // Helper to calculate salary and commission for an operator in a week ($50 base + $20 c/10)
+  // Helper to calculate salary and commission for an operator ($50 base + $20 c/10)
   const calculatePayroll = (opName, cartsCount) => {
     const userCfg = USERS_CONFIG.find(u => u.name === opName);
     const baseSalary = userCfg?.baseSalary || 50;
@@ -129,8 +176,8 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
           </h2>
           <p className="text-xs text-slate-500 mt-1">
             {currentUser?.id === 'daily' 
-              ? 'Visualiza tu salario semanal fijo ($50) y tus carritos realizados.' 
-              : 'Cálculo de ingresos brutos, deducciones, salarios fijos ($50) y comisiones ($20 por cada 10 carritos).'}
+              ? 'Visualiza tu salario semanal fijo ($50) y tus carritos individuales realizados.' 
+              : 'Control de pagos de clientes, costos pagados en SHEIN por carrito, deducciones y liquidación.'}
           </p>
         </div>
 
@@ -184,39 +231,28 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Columna 1: Pedidos y Seguimiento */}
             <div className="space-y-2 p-3.5 bg-fuchsia-50/50 rounded-2xl border border-fuchsia-100">
               <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
-                <span>1. Gestión de Pedidos & Estados</span>
+                <span>1. Gestión de Pedidos y Carritos/Correos</span>
               </div>
               <p className="text-slate-600 leading-relaxed">
-                • <strong>Nuevo Pedido:</strong> Ingresa el nombre del cliente, correo, clave, monto que pagó, número de carritos, guía y operador.<br/>
-                • <strong>Inyección Automática:</strong> Al guardar, se inyecta inmediatamente en la <em>Hoja 1</em> de Google Sheets mediante SteinHQ.<br/>
-                • <strong>Estados de Seguimiento:</strong>
+                • <strong>Monto Cobrado al Cliente:</strong> Total que paga el cliente (ej. $500).<br/>
+                • <strong>Desglose de Carritos / Correos:</strong> Se agregan los carritos realizados con sus correos y el monto pagado a SHEIN.<br/>
+                • <strong>Trabajo en Equipo:</strong> Si Ana crea el pedido, Daily o Francis pueden entrar y agregar sus carritos con el botón <em>➕ Registrar Carrito</em>.<br/>
+                • <strong>Ganancia Neta:</strong> Se calcula automáticamente restando lo pagado a la tienda del monto pagado por el cliente.
               </p>
-              <ul className="list-disc list-inside space-y-0.5 text-slate-600 pl-1">
-                <li><span className="font-semibold text-slate-700">Pendiente:</span> Pedido registrado en espera de compra.</li>
-                <li><span className="font-semibold text-amber-700">En Revisión ⏳:</span> Carrito enviado pero esperando confirmación/aprobación de la tienda.</li>
-                <li><span className="font-semibold text-sky-700">Salió 🚚:</span> Pedido despachado por la paquetería.</li>
-                <li><span className="font-semibold text-amber-700">Llegó 📦:</span> Paquete recibido en almacén/destino.</li>
-                <li><span className="font-semibold text-emerald-700">Entregado ✨:</span> Entregado 100% al cliente con confeti.</li>
-              </ul>
             </div>
 
-            {/* Columna 2: Salarios, Comisiones y Gastos */}
             <div className="space-y-2 p-3.5 bg-pink-50/50 rounded-2xl border border-pink-100">
               <div className="font-bold text-slate-900 text-sm flex items-center gap-1.5">
                 <span>2. Nómina, Comisiones & Deducciones</span>
               </div>
               <p className="text-slate-600 leading-relaxed">
                 • <strong>Sueldo Base Semanal:</strong> <strong>$50.00</strong> para cada una.<br/>
-                • <strong>Comisión por Carritos:</strong> <strong>$20 por cada 10 carritos</strong> ($2 por carrito) para <em>Francis</em> y <em>Ana</em>.<br/>
+                • <strong>Comisión por Carritos:</strong> <strong>$20 por cada 10 carritos</strong> ($2 por carrito) para <em>Francis</em> y <em>Ana</em> calculados sobre los carritos que cada una ejecutó.<br/>
                 • <strong>Daily:</strong> Cobra únicamente su sueldo fijo de <strong>$50.00</strong>.<br/>
-                • <strong>Deducciones / Gastos:</strong> Costos de cuentas/correos, insumos o pagos a terceros que se restan del ingreso bruto total para calcular la <strong>Ganancia Neta</strong>.
+                • <strong>Gastos Generales:</strong> Insumos u otros costos extraordinarios que se restan del balance general.
               </p>
-              <div className="p-2.5 rounded-xl bg-white border border-fuchsia-200 text-[11px] text-fuchsia-900 font-semibold">
-                🔒 <strong>Privacidad:</strong> Daily solo ve sus propios carritos y su salario. Francis ve a Francis y Daily. Ana (Supervisora) ve el consolidado de las 3.
-              </div>
             </div>
           </div>
         </div>
@@ -228,24 +264,26 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
           <>
             <div className="stat-card">
               <div className="flex items-center justify-between text-slate-500 text-xs font-bold">
-                <span>Ingresos Totales</span>
+                <span>Ingresos Clientes</span>
                 <ArrowUpRight size={16} className="text-emerald-500" />
               </div>
               <div className="text-2xl font-black text-emerald-600 mt-1">
                 ${overall.totalIncome.toFixed(2)}
               </div>
-              <div className="text-[11px] text-slate-400 mt-1">Suma de pagos de clientes</div>
+              <div className="text-[11px] text-slate-400 mt-1">Pagado por clientes</div>
             </div>
 
             <div className="stat-card">
               <div className="flex items-center justify-between text-slate-500 text-xs font-bold">
-                <span>Deducciones / Gastos</span>
+                <span>Gastado en Tienda</span>
                 <ArrowDownRight size={16} className="text-rose-500" />
               </div>
               <div className="text-2xl font-black text-rose-500 mt-1">
-                -${overall.totalExpenses.toFixed(2)}
+                -${overall.totalStoreExpenses.toFixed(2)}
               </div>
-              <div className="text-[11px] text-slate-400 mt-1">Correos, muebles y comisiones</div>
+              <div className="text-[11px] text-slate-400 mt-1">
+                Pagos en carritos SHEIN {overall.totalGeneralExpenses > 0 ? `(+ $${overall.totalGeneralExpenses.toFixed(2)} otros)` : ''}
+              </div>
             </div>
 
             <div className="stat-card border-fuchsia-300 bg-gradient-to-br from-fuchsia-50 to-white">
@@ -378,7 +416,7 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
                 )}
               </div>
 
-              {/* Liquidación Semanal: filtered strictly per active selection and user permissions */}
+              {/* Liquidación Semanal: Calculated per individual subCarts performed */}
               <div className="space-y-2.5">
                 <div className="text-xs font-extrabold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
                   <Award size={15} className="text-fuchsia-600" />
@@ -388,6 +426,7 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
                 <div className={`grid gap-3 ${displayedOperatorsInPayroll.length === 1 ? 'grid-cols-1' : (displayedOperatorsInPayroll.length === 2 ? 'grid-cols-1 md:grid-cols-2' : 'grid-cols-1 md:grid-cols-3')}`}>
                   {displayedOperatorsInPayroll.map(op => {
                     const cartsCount = activeWeek.operatorCarts[op] || 0;
+                    const storePaidByOp = activeWeek.operatorStorePaid[op] || 0;
                     const payroll = calculatePayroll(op, cartsCount);
                     return (
                       <div key={op} className="p-4 rounded-2xl bg-fuchsia-50/70 border border-fuchsia-200 text-xs space-y-2 shadow-sm">
@@ -396,9 +435,15 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
                           <span className="text-fuchsia-600 font-extrabold text-base">${payroll.total.toFixed(2)}</span>
                         </div>
                         <div className="text-slate-500 text-xs flex justify-between">
-                          <span>Carritos hechos:</span>
+                          <span>Carritos realizados:</span>
                           <strong className="text-purple-700 text-sm font-bold">{cartsCount}</strong>
                         </div>
+                        {storePaidByOp > 0 && (
+                          <div className="text-slate-500 text-xs flex justify-between">
+                            <span>Pagado a SHEIN por ella:</span>
+                            <span className="font-semibold text-rose-600">${storePaidByOp.toFixed(2)}</span>
+                          </div>
+                        )}
                         <div className="text-slate-500 text-xs flex justify-between">
                           <span>Sueldo Fijo:</span>
                           <span className="font-semibold text-slate-700">${payroll.baseSalary.toFixed(2)}</span>
@@ -419,16 +464,23 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
                 </div>
               </div>
 
-              {/* Formula View for Admins */}
+              {/* Balance Global de Ganancias */}
               {currentUser?.id !== 'daily' && (
                 <div className="p-4 rounded-2xl bg-fuchsia-50/60 border border-fuchsia-200/80 font-mono text-xs space-y-2">
                   <div className="text-slate-500 font-bold uppercase text-[10px] tracking-wider mb-1">
                     Balance Global de Ganancias:
                   </div>
                   <div className="text-emerald-700 flex justify-between font-semibold">
-                    <span>+ Ingreso total ({activeWeek.orders.length} pedidos / {activeWeek.totalCarts} carritos):</span>
+                    <span>+ Ingreso total clientes ({activeWeek.orders.length} pedidos / {activeWeek.totalCarts} carritos):</span>
                     <span className="font-bold">+${activeWeek.totalIncome.toFixed(2)}</span>
                   </div>
+
+                  {activeWeek.totalStoreExpenses > 0 && (
+                    <div className="text-rose-600 flex justify-between font-semibold pl-2 border-l-2 border-rose-400">
+                      <span>- Total pagado a SHEIN / Tienda en carritos:</span>
+                      <span>-${activeWeek.totalStoreExpenses.toFixed(2)}</span>
+                    </div>
+                  )}
 
                   {activeWeek.expenses.map((exp, idx) => (
                     <div key={exp.id || idx} className="text-rose-600 flex justify-between items-center group pl-2 border-l-2 border-rose-400">
@@ -454,33 +506,45 @@ export default function WeeklyReport({ orders, expenses, onAddExpense, onDeleteE
                 </div>
               )}
 
-              {/* Orders in Week */}
-              <div className="space-y-3 pt-1">
-                <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
-                  Carritos en esta semana ({activeWeek.orders.length})
-                </h4>
-                <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                  {activeWeek.orders.map((ord) => (
-                    <div
-                      key={ord.id}
-                      className="p-3 rounded-xl bg-fuchsia-50/40 border border-fuchsia-100 text-xs flex items-center justify-between"
-                    >
-                      <div>
-                        <span className="font-bold text-slate-800">{ord.clientName}</span>
-                        <span className="badge badge-operator text-[10px] ml-2">{ord.operator}</span>
+              {/* Orders Table for this week */}
+              <div className="space-y-2">
+                <div className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                  Pedidos de la semana ({activeWeek.orders.length}):
+                </div>
+                <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                  {activeWeek.orders.map(o => {
+                    const subCount = o.subCarts?.length || o.cartsCount || 1;
+                    const storePaidOrd = o.subCarts?.reduce((acc, c) => acc + Number(c.paidAmount || 0), 0) || 0;
+                    const net = Number(o.paidAmount || 0) - storePaidOrd;
+
+                    return (
+                      <div key={o.id} className="p-2.5 bg-slate-50/80 rounded-xl border border-slate-200/80 flex items-center justify-between text-xs">
+                        <div>
+                          <div className="font-extrabold text-slate-800 flex items-center gap-1.5">
+                            <span>{o.clientName}</span>
+                            <span className="text-[10px] px-1.5 py-0.2 rounded bg-fuchsia-100 text-fuchsia-700 font-bold">
+                              {o.operator}
+                            </span>
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {subCount} carritos {storePaidOrd > 0 ? `• Pagado en tienda: $${storePaidOrd.toFixed(2)}` : ''}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-bold text-slate-800">${Number(o.paidAmount || 0).toFixed(2)}</div>
+                          <div className={`text-[11px] font-extrabold ${net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            Neto: ${net.toFixed(2)}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-3">
-                        <span className="text-purple-600 font-semibold">{ord.cartsCount || 1} carritos</span>
-                        <span className="font-black text-fuchsia-600">${Number(ord.paidAmount || 0).toFixed(2)}</span>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
           ) : (
-            <div className="glass-card text-center py-16 text-slate-400 bg-white">
-              Selecciona una semana para ver los detalles.
+            <div className="glass-card text-center py-12 text-slate-400 text-xs bg-white">
+              Selecciona una semana para ver su desglose contable.
             </div>
           )}
         </div>

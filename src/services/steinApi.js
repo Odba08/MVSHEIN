@@ -56,19 +56,29 @@ export const testSteinConnection = async () => {
   }
 };
 
-const formatOrderForStein = (o) => ({
-  "id": o.id || `ord_${Date.now()}`,
-  "Nombre cliente": o.clientName || "",
-  "Correo que se utilizo": o.email || "",
-  "Clave que se utilizo": o.password || "",
-  "Monto que pago": Number(o.paidAmount || 0),
-  "Cantidad de carritos": Number(o.cartsCount || 1),
-  "Seguimiento": o.status || "Pendiente",
-  "Numero de guia": o.trackingNumber || "",
-  "Realizado por": o.operator || "Francis",
-  "Fecha realizada": o.date || new Date().toISOString().split("T")[0],
-  "Notas": o.notes || ""
-});
+const formatOrderForStein = (o) => {
+  const subCarts = Array.isArray(o.subCarts) ? o.subCarts : [];
+  const storePaid = subCarts.reduce((acc, c) => acc + Number(c.paidAmount || 0), 0);
+  const totalCarts = subCarts.length > 0 ? subCarts.length : Number(o.cartsCount || 1);
+  const emailsList = subCarts.length > 0 ? subCarts.map(c => c.email).filter(Boolean).join(', ') : (o.email || "");
+
+  return {
+    "id": o.id || `ord_${Date.now()}`,
+    "Nombre cliente": o.clientName || "",
+    "Correo que se utilizo": emailsList || o.email || "",
+    "Clave que se utilizo": o.password || "",
+    "Monto que pago": Number(o.paidAmount || 0),
+    "Total pagado en tienda": Number(storePaid.toFixed(2)),
+    "Ganancia neta": Number((Number(o.paidAmount || 0) - storePaid).toFixed(2)),
+    "Cantidad de carritos": totalCarts,
+    "Seguimiento": o.status || "Pendiente",
+    "Numero de guia": o.trackingNumber || "",
+    "Realizado por": o.operator || "Francis",
+    "Fecha realizada": o.date || new Date().toISOString().split("T")[0],
+    "Notas": o.notes || "",
+    "Carritos detallados": subCarts.length > 0 ? JSON.stringify(subCarts) : ""
+  };
+};
 
 // --- PEDIDOS (ORDERS) - SIN DATOS FALSOS / SEEDS ---
 
@@ -98,20 +108,33 @@ export const fetchOrdersFromStein = async () => {
             item['Nombre cliente'] || item.clientName || item.cliente || item['Correo que se utilizo']
           );
 
-          const normalized = validRows.map(item => ({
-            id: item.id || `ord_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
-            clientName: item['Nombre cliente'] || item.clientName || item.cliente || "",
-            email: item['Correo que se utilizo'] || item.email || item.emailUsed || item.correo || "",
-            password: item['Clave que se utilizo'] || item.password || item.passwordUsed || item.clave || "",
-            paidAmount: parseFloat(item['Monto que pago'] || item.paidAmount || item.amountPaid || item.monto || 0),
-            cartsCount: parseInt(item['Cantidad de carritos'] || item.cartsCount || item.carritos || 1, 10),
-            status: item['Seguimiento'] || item.status || item.seguimiento || "Pendiente",
-            trackingNumber: item['Numero de guia'] || item.trackingNumber || item.guia || "",
-            operator: item['Realizado por'] || item.operator || item.handledBy || item.realizadoPor || "Francis",
-            date: item['Fecha realizada'] || item.date || item.fecha || new Date().toISOString().split("T")[0],
-            notes: item['Notas'] || item.notes || item.notas || "",
-            createdAt: item.createdAt || new Date().toISOString()
-          }));
+          const normalized = validRows.map(item => {
+            let parsedSubCarts = [];
+            if (Array.isArray(item.subCarts)) {
+              parsedSubCarts = item.subCarts;
+            } else if (item['Carritos detallados'] || item.subCarts) {
+              try {
+                const parsed = JSON.parse(item['Carritos detallados'] || item.subCarts);
+                if (Array.isArray(parsed)) parsedSubCarts = parsed;
+              } catch (e) {}
+            }
+
+            return {
+              id: item.id || `ord_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+              clientName: item['Nombre cliente'] || item.clientName || item.cliente || "",
+              email: item['Correo que se utilizo'] || item.email || item.emailUsed || item.correo || "",
+              password: item['Clave que se utilizo'] || item.password || item.passwordUsed || item.clave || "",
+              paidAmount: parseFloat(item['Monto que pago'] || item.paidAmount || item.amountPaid || item.monto || 0),
+              cartsCount: parseInt(item['Cantidad de carritos'] || item.cartsCount || item.carritos || (parsedSubCarts.length > 0 ? parsedSubCarts.length : 1), 10),
+              subCarts: parsedSubCarts,
+              status: item['Seguimiento'] || item.status || item.seguimiento || "Pendiente",
+              trackingNumber: item['Numero de guia'] || item.trackingNumber || item.guia || "",
+              operator: item['Realizado por'] || item.operator || item.handledBy || item.realizadoPor || "Francis",
+              date: item['Fecha realizada'] || item.date || item.fecha || new Date().toISOString().split("T")[0],
+              notes: item['Notas'] || item.notes || item.notas || "",
+              createdAt: item.createdAt || new Date().toISOString()
+            };
+          });
 
           localStorage.setItem(STORAGE_KEY_ORDERS, JSON.stringify(normalized));
           return normalized;

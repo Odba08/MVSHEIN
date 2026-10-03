@@ -3,7 +3,8 @@ import confetti from 'canvas-confetti';
 import { 
   Search, Plus, Filter, Calendar, User, Truck, 
   ShoppingCart, RefreshCw, Download, Layers, 
-  CheckCircle2, AlertCircle, TrendingUp, Sparkles, SlidersHorizontal, X, Heart, Clock 
+  CheckCircle2, AlertCircle, TrendingUp, Sparkles, SlidersHorizontal, X, Heart, Clock,
+  DollarSign
 } from 'lucide-react';
 
 import { AuthProvider, useAuth } from './context/AuthContext';
@@ -20,6 +21,7 @@ import { exportOrdersToExcel, exportFullAccountingExcel } from './utils/excelExp
 import Navbar from './components/Navbar';
 import OrderCard from './components/OrderCard';
 import OrderModal from './components/OrderModal';
+import QuickAddSubCartModal from './components/QuickAddSubCartModal';
 import ExpenseModal from './components/ExpenseModal';
 import WeeklyReport from './components/WeeklyReport';
 import SettingsModal from './components/SettingsModal';
@@ -38,6 +40,10 @@ function MainDashboard() {
   const [editingOrder, setEditingOrder] = useState(null);
   const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+
+  // Quick Add Sub-Cart Modal
+  const [quickAddTargetOrder, setQuickAddTargetOrder] = useState(null);
+  const [isQuickAddModalOpen, setIsQuickAddModalOpen] = useState(false);
 
   // Data state (pure live data from SteinHQ)
   const [orders, setOrders] = useState([]);
@@ -142,6 +148,56 @@ function MainDashboard() {
     }
   };
 
+  // Quick Add Sub-Cart Handlers
+  const handleOpenQuickAddCart = (order) => {
+    setQuickAddTargetOrder(order);
+    setIsQuickAddModalOpen(true);
+  };
+
+  const handleAddSubCartToOrder = async (orderId, newSubCart) => {
+    const target = orders.find(o => o.id === orderId);
+    if (!target) return;
+
+    const currentSubCarts = Array.isArray(target.subCarts) ? target.subCarts : [];
+    const updatedSubCarts = [...currentSubCarts, newSubCart];
+    const updatedOrder = {
+      ...target,
+      subCarts: updatedSubCarts,
+      cartsCount: updatedSubCarts.length,
+      updatedAt: new Date().toISOString()
+    };
+
+    const updatedOrders = orders.map(o => o.id === orderId ? updatedOrder : o);
+    setOrders(updatedOrders);
+    setIsQuickAddModalOpen(false);
+    setQuickAddTargetOrder(null);
+
+    setSyncStatus({ state: 'syncing', message: `Actualizando carritos en Google Sheet (${target.clientName})...` });
+    await syncOrderToStein(updatedOrder);
+    setSyncStatus({ state: 'synced', message: `✅ Carrito de ${newSubCart.operator} ($${newSubCart.paidAmount}) guardado` });
+    setTimeout(() => setSyncStatus({ state: 'idle', message: '' }), 3500);
+  };
+
+  const handleDeleteSubCart = async (orderId, subCartId) => {
+    if (!window.confirm('¿Eliminar este carrito individual?')) return;
+    const target = orders.find(o => o.id === orderId);
+    if (!target) return;
+
+    const currentSubCarts = Array.isArray(target.subCarts) ? target.subCarts : [];
+    const updatedSubCarts = currentSubCarts.filter(c => c.id !== subCartId);
+    const updatedOrder = {
+      ...target,
+      subCarts: updatedSubCarts,
+      cartsCount: updatedSubCarts.length > 0 ? updatedSubCarts.length : (target.cartsCount || 1),
+      updatedAt: new Date().toISOString()
+    };
+
+    const updatedOrders = orders.map(o => o.id === orderId ? updatedOrder : o);
+    setOrders(updatedOrders);
+
+    await syncOrderToStein(updatedOrder);
+  };
+
   // Save Expense
   const handleSaveExpense = async (expenseData) => {
     const itemToSave = {
@@ -165,7 +221,11 @@ function MainDashboard() {
 
   // Filtered Orders Logic with Strict Role-Based Visibility
   const visibleOrders = useMemo(() => {
-    return orders.filter(ord => canViewOperator(ord.operator));
+    return orders.filter(ord => {
+      if (canViewOperator(ord.operator)) return true;
+      if (ord.subCarts && ord.subCarts.some(c => canViewOperator(c.operator))) return true;
+      return false;
+    });
   }, [orders, canViewOperator]);
 
   const filteredOrders = useMemo(() => {
@@ -177,13 +237,20 @@ function MainDashboard() {
         const matchesGuide = ord.trackingNumber?.toLowerCase().includes(q);
         const matchesOperator = ord.operator?.toLowerCase().includes(q);
         const matchesNotes = ord.notes?.toLowerCase().includes(q);
-        if (!matchesClient && !matchesEmail && !matchesGuide && !matchesOperator && !matchesNotes) {
+        const matchesSubCarts = ord.subCarts?.some(c => 
+          c.email?.toLowerCase().includes(q) || 
+          c.operator?.toLowerCase().includes(q) || 
+          c.notes?.toLowerCase().includes(q)
+        );
+        if (!matchesClient && !matchesEmail && !matchesGuide && !matchesOperator && !matchesNotes && !matchesSubCarts) {
           return false;
         }
       }
 
-      if (filterOperator !== 'ALL' && ord.operator !== filterOperator) {
-        return false;
+      if (filterOperator !== 'ALL') {
+        const isMainOp = ord.operator === filterOperator;
+        const hasSubCartOp = ord.subCarts?.some(c => c.operator === filterOperator);
+        if (!isMainOp && !hasSubCartOp) return false;
       }
 
       if (filterStatus !== 'ALL' && ord.status !== filterStatus) {
@@ -204,10 +271,17 @@ function MainDashboard() {
   // Fast Metrics for Top Bar
   const stats = useMemo(() => {
     const totalOrders = filteredOrders.length;
-    const totalCarts = filteredOrders.reduce((sum, o) => sum + Number(o.cartsCount || 1), 0);
+    const totalCarts = filteredOrders.reduce((sum, o) => {
+      return sum + (o.subCarts?.length > 0 ? o.subCarts.length : Number(o.cartsCount || 1));
+    }, 0);
     const totalPaid = filteredOrders.reduce((sum, o) => sum + Number(o.paidAmount || 0), 0);
+    const totalStoreSpent = filteredOrders.reduce((sum, o) => {
+      const subTotal = o.subCarts?.reduce((acc, c) => acc + Number(c.paidAmount || 0), 0) || 0;
+      return sum + subTotal;
+    }, 0);
+    const totalNet = totalPaid - totalStoreSpent;
     const deliveredCount = filteredOrders.filter(o => o.status === 'Entregado').length;
-    return { totalOrders, totalCarts, totalPaid, deliveredCount };
+    return { totalOrders, totalCarts, totalPaid, totalStoreSpent, totalNet, deliveredCount };
   }, [filteredOrders]);
 
   const clearFilters = () => {
@@ -250,13 +324,13 @@ function MainDashboard() {
             {/* Quick Metrics Bar */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 sm:gap-4">
               <div className="stat-card">
-                <div className="text-[11px] text-slate-500 font-bold uppercase">Carritos en Lista</div>
+                <div className="text-[11px] text-slate-500 font-bold uppercase">Pedidos en Vista</div>
                 <div className="text-2xl font-black text-slate-800 mt-1">{stats.totalOrders}</div>
-                <div className="text-[10px] text-fuchsia-600 mt-0.5 font-semibold">En la vista actual</div>
+                <div className="text-[10px] text-fuchsia-600 mt-0.5 font-semibold">Total de clientes</div>
               </div>
 
               <div className="stat-card">
-                <div className="text-[11px] text-slate-500 font-bold uppercase">Total Carritos</div>
+                <div className="text-[11px] text-slate-500 font-bold uppercase">Total Carritos / Correos</div>
                 <div className="text-2xl font-black text-purple-600 mt-1 flex items-center gap-1.5">
                   <ShoppingCart size={18} />
                   <span>{stats.totalCarts}</span>
@@ -265,20 +339,24 @@ function MainDashboard() {
               </div>
 
               <div className="stat-card">
-                <div className="text-[11px] text-slate-500 font-bold uppercase">Monto Total Pagado</div>
+                <div className="text-[11px] text-slate-500 font-bold uppercase">Cobrado a Clientes</div>
                 <div className="text-2xl font-black text-fuchsia-600 mt-1">
                   ${stats.totalPaid.toFixed(2)}
                 </div>
-                <div className="text-[10px] text-fuchsia-500 mt-0.5 font-semibold">Ingreso bruto de pedidos</div>
+                <div className="text-[10px] text-fuchsia-500 mt-0.5 font-semibold">
+                  {stats.totalStoreSpent > 0 ? `Pagado SHEIN: -$${stats.totalStoreSpent.toFixed(2)}` : 'Monto total ingresado'}
+                </div>
               </div>
 
-              <div className="stat-card">
-                <div className="text-[11px] text-slate-500 font-bold uppercase">Entregados</div>
-                <div className="text-2xl font-black text-emerald-600 mt-1 flex items-center gap-1.5">
-                  <Truck size={18} />
-                  <span>{stats.deliveredCount}</span>
+              <div className="stat-card border-emerald-200 bg-gradient-to-br from-emerald-50/50 to-white">
+                <div className="text-[11px] text-slate-500 font-bold uppercase">Ganancia Neta Estimada</div>
+                <div className={`text-2xl font-black mt-1 flex items-center gap-1.5 ${stats.totalNet >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  <DollarSign size={18} />
+                  <span>${stats.totalNet.toFixed(2)}</span>
                 </div>
-                <div className="text-[10px] text-emerald-500 mt-0.5 font-semibold">Completados al 100%</div>
+                <div className="text-[10px] text-emerald-600 mt-0.5 font-semibold">
+                  {stats.deliveredCount} pedidos entregados
+                </div>
               </div>
             </div>
 
@@ -292,7 +370,7 @@ function MainDashboard() {
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Buscar por cliente, correo, guía, operador..."
+                    placeholder="Buscar por cliente, correo usado, guía, operadora..."
                     className="input-field pl-10 text-sm"
                   />
                   {searchQuery && (
@@ -353,10 +431,10 @@ function MainDashboard() {
                   <button
                     onClick={() => exportOrdersToExcel(visibleOrders)}
                     className="btn-secondary text-xs py-2.5 flex items-center gap-1.5 hover:text-emerald-600 hover:border-emerald-300"
-                    title="Descargar TODOS los carritos a Excel"
+                    title="Descargar TODOS los pedidos y carritos a Excel"
                   >
                     <Download size={14} />
-                    <span>Descargar Todo Excel</span>
+                    <span>Descargar Excel</span>
                   </button>
                 </div>
               </div>
@@ -397,7 +475,7 @@ function MainDashboard() {
               )}
             </div>
 
-            {/* Order Grid (Empty State if no carts in Google Sheet) */}
+            {/* Order Grid */}
             {filteredOrders.length === 0 ? (
               <div className="glass-card text-center py-16 space-y-4 bg-white/95">
                 <div className="w-16 h-16 mx-auto rounded-3xl bg-fuchsia-50 flex items-center justify-center text-fuchsia-400 shadow-sm border border-fuchsia-100">
@@ -405,10 +483,10 @@ function MainDashboard() {
                 </div>
                 <div>
                   <h3 className="text-base font-bold text-slate-800">
-                    {hasActiveFilters ? 'No hay pedidos con esos filtros' : 'No hay carritos registrados en Google Sheets'}
+                    {hasActiveFilters ? 'No hay pedidos con esos filtros' : 'No hay pedidos registrados en Google Sheets'}
                   </h3>
                   <p className="text-xs text-slate-500 mt-1">
-                    {hasActiveFilters ? 'Prueba ajustando los filtros.' : 'Haz clic en "Nuevo Pedido" para registrar el primer carrito y guardarlo en el Sheet.'}
+                    {hasActiveFilters ? 'Prueba ajustando los filtros.' : 'Haz clic en "Nuevo Pedido" para registrar el primer pedido y guardarlo en el Sheet.'}
                   </p>
                 </div>
                 <div>
@@ -436,6 +514,8 @@ function MainDashboard() {
                     }}
                     onDelete={handleDeleteOrder}
                     onStatusChange={handleStatusChange}
+                    onOpenQuickAddCart={handleOpenQuickAddCart}
+                    onDeleteSubCart={handleDeleteSubCart}
                   />
                 ))}
               </div>
@@ -461,6 +541,16 @@ function MainDashboard() {
         }}
         onSave={handleSaveOrder}
         initialData={editingOrder}
+      />
+
+      <QuickAddSubCartModal
+        isOpen={isQuickAddModalOpen}
+        order={quickAddTargetOrder}
+        onClose={() => {
+          setIsQuickAddModalOpen(false);
+          setQuickAddTargetOrder(null);
+        }}
+        onAddSubCart={handleAddSubCartToOrder}
       />
 
       <ExpenseModal

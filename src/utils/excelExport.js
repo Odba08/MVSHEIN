@@ -21,33 +21,42 @@ export const getISOWeekKey = (dateString) => {
   return `Semana del ${formatShort(monday)} al ${formatShort(sunday)}`;
 };
 
-// EXPORTACIÓN DE TODOS LOS CARRITOS A EXCEL (SIN FILTRAR POR PERSONA)
+// EXPORTACIÓN DE TODOS LOS PEDIDOS A EXCEL
 export const exportOrdersToExcel = (allOrders, fileName = 'MV_SHEIN_Todos_Los_Carritos.xlsx') => {
   if (!allOrders || allOrders.length === 0) {
     alert('No hay carritos registrados para exportar.');
     return;
   }
 
-  const data = allOrders.map((o, idx) => ({
-    '#': idx + 1,
-    'Fecha': o.date || '',
-    'Cliente': o.clientName || '',
-    'Correo que se utilizó': o.email || '',
-    'Clave que se utilizó': o.password || '',
-    'Monto Pagado ($)': Number(o.paidAmount || 0).toFixed(2),
-    'Cantidad de Carritos': o.cartsCount || 1,
-    'Estado / Seguimiento': o.status || 'Pendiente',
-    'Número de Guía': o.trackingNumber || '',
-    'Realizado Por': o.operator || 'Francis',
-    'Notas / Detalle': o.notes || '',
-  }));
+  const data = allOrders.map((o, idx) => {
+    const subCarts = Array.isArray(o.subCarts) ? o.subCarts : [];
+    const storePaid = subCarts.reduce((acc, c) => acc + Number(c.paidAmount || 0), 0);
+    const net = Number(o.paidAmount || 0) - storePaid;
+    const totalCarts = subCarts.length > 0 ? subCarts.length : (o.cartsCount || 1);
+    const emailsList = subCarts.length > 0 ? subCarts.map(c => c.email).filter(Boolean).join(', ') : (o.email || '');
+
+    return {
+      '#': idx + 1,
+      'Fecha': o.date || '',
+      'Cliente': o.clientName || '',
+      'Correos Utilizados': emailsList,
+      'Monto Pagado Cliente ($)': Number(o.paidAmount || 0).toFixed(2),
+      'Total Pagado SHEIN ($)': storePaid.toFixed(2),
+      'Ganancia Neta ($)': net.toFixed(2),
+      'Cantidad de Carritos': totalCarts,
+      'Estado / Seguimiento': o.status || 'Pendiente',
+      'Número de Guía': o.trackingNumber || '',
+      'Registrado Por': o.operator || 'Francis',
+      'Notas / Detalle': o.notes || '',
+    };
+  });
 
   const worksheet = XLSX.utils.json_to_sheet(data);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, 'Todos_Los_Carritos');
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Todos_Los_Pedidos');
 
   worksheet['!cols'] = [
-    { wch: 5 }, { wch: 12 }, { wch: 25 }, { wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 30 }
+    { wch: 5 }, { wch: 12 }, { wch: 25 }, { wch: 32 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 16 }, { wch: 30 }
   ];
 
   XLSX.writeFile(workbook, fileName);
@@ -61,29 +70,61 @@ export const exportFullAccountingExcel = (allOrders, allExpenses, fileName = 'MV
   allOrders.forEach(o => {
     const wk = getISOWeekKey(o.date);
     if (!weekMap[wk]) {
-      weekMap[wk] = { week: wk, income: 0, carts: 0, expenses: 0, orders: [], expList: [], operators: { Francis: 0, Daily: 0, Ana: 0 } };
+      weekMap[wk] = { 
+        week: wk, 
+        income: 0, 
+        storeExpenses: 0, 
+        generalExpenses: 0, 
+        carts: 0, 
+        orders: [], 
+        expList: [], 
+        operators: { Francis: 0, Daily: 0, Ana: 0 } 
+      };
     }
     weekMap[wk].orders.push(o);
     weekMap[wk].income += Number(o.paidAmount || 0);
-    const count = Number(o.cartsCount || 1);
-    weekMap[wk].carts += count;
-    if (o.operator && weekMap[wk].operators[o.operator] !== undefined) {
-      weekMap[wk].operators[o.operator] += count;
+
+    const subCarts = Array.isArray(o.subCarts) ? o.subCarts : [];
+    if (subCarts.length > 0) {
+      weekMap[wk].carts += subCarts.length;
+      subCarts.forEach(sc => {
+        const op = sc.operator || o.operator || 'Francis';
+        if (weekMap[wk].operators[op] !== undefined) {
+          weekMap[wk].operators[op] += 1;
+        }
+        weekMap[wk].storeExpenses += Number(sc.paidAmount || 0);
+      });
+    } else {
+      const count = Number(o.cartsCount || 1);
+      weekMap[wk].carts += count;
+      if (o.operator && weekMap[wk].operators[o.operator] !== undefined) {
+        weekMap[wk].operators[o.operator] += count;
+      }
     }
   });
 
   allExpenses.forEach(e => {
     const wk = getISOWeekKey(e.date);
     if (!weekMap[wk]) {
-      weekMap[wk] = { week: wk, income: 0, carts: 0, expenses: 0, orders: [], expList: [], operators: { Francis: 0, Daily: 0, Ana: 0 } };
+      weekMap[wk] = { 
+        week: wk, 
+        income: 0, 
+        storeExpenses: 0, 
+        generalExpenses: 0, 
+        carts: 0, 
+        orders: [], 
+        expList: [], 
+        operators: { Francis: 0, Daily: 0, Ana: 0 } 
+      };
     }
     weekMap[wk].expList.push(e);
-    weekMap[wk].expenses += Number(e.amount || 0);
+    weekMap[wk].generalExpenses += Number(e.amount || 0);
   });
 
   // Hoja 1: Resumen Semanal
   const summaryRows = Object.values(weekMap).map((w, idx) => {
-    const net = w.income - w.expenses;
+    const totalExp = w.storeExpenses + w.generalExpenses;
+    const net = w.income - totalExp;
     const margin = w.income > 0 ? ((net / w.income) * 100).toFixed(1) + '%' : '0%';
     const perCart = w.carts > 0 ? (net / w.carts).toFixed(2) : '0.00';
 
@@ -94,8 +135,9 @@ export const exportFullAccountingExcel = (allOrders, allExpenses, fileName = 'MV
       'Carritos Francis': w.operators.Francis,
       'Carritos Daily': w.operators.Daily,
       'Carritos Ana': w.operators.Ana,
-      'Ingresos Brutos ($)': `$${w.income.toFixed(2)}`,
-      'Gastos / Deducciones ($)': `-$${w.expenses.toFixed(2)}`,
+      'Ingresos Clientes ($)': `$${w.income.toFixed(2)}`,
+      'Pagado SHEIN ($)': `-$${w.storeExpenses.toFixed(2)}`,
+      'Otros Gastos ($)': `-$${w.generalExpenses.toFixed(2)}`,
       'Ganancia Neta ($)': `$${net.toFixed(2)}`,
       'Margen Ganancia': margin,
       'Ganancia / Carrito ($)': `$${perCart}`,
@@ -104,7 +146,7 @@ export const exportFullAccountingExcel = (allOrders, allExpenses, fileName = 'MV
 
   const summaryWs = XLSX.utils.json_to_sheet(summaryRows.length > 0 ? summaryRows : [{ Mensaje: 'Sin registros' }]);
   summaryWs['!cols'] = [
-    { wch: 5 }, { wch: 32 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 18 }, { wch: 16 }, { wch: 18 }
+    { wch: 5 }, { wch: 32 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 18 }
   ];
   XLSX.utils.book_append_sheet(workbook, summaryWs, 'Resumen_Semanas');
 
@@ -156,25 +198,71 @@ export const exportFullAccountingExcel = (allOrders, allExpenses, fileName = 'MV
   ];
   XLSX.utils.book_append_sheet(workbook, payrollWs, 'Nomina_Y_Comisiones');
 
-  // Hoja 3: Detalle de todos los carritos
-  const ordersRows = allOrders.map((o, idx) => ({
-    '#': idx + 1,
-    'Semana': getISOWeekKey(o.date),
-    'Fecha': o.date || '',
-    'Cliente': o.clientName || '',
-    'Correo': o.email || '',
-    'Clave': o.password || '',
-    'Monto Pagado ($)': Number(o.paidAmount || 0).toFixed(2),
-    'Carritos': o.cartsCount || 1,
-    'Estado': o.status || 'Pendiente',
-    'Guía': o.trackingNumber || '',
-    'Realizado Por': o.operator || 'Francis',
-  }));
+  // Hoja 3: Detalle de Pedidos
+  const ordersRows = allOrders.map((o, idx) => {
+    const subCarts = Array.isArray(o.subCarts) ? o.subCarts : [];
+    const storePaid = subCarts.reduce((acc, c) => acc + Number(c.paidAmount || 0), 0);
+    const net = Number(o.paidAmount || 0) - storePaid;
+
+    return {
+      '#': idx + 1,
+      'Semana': getISOWeekKey(o.date),
+      'Fecha': o.date || '',
+      'Cliente': o.clientName || '',
+      'Monto Cliente ($)': Number(o.paidAmount || 0).toFixed(2),
+      'Total Pagado SHEIN ($)': storePaid.toFixed(2),
+      'Ganancia Neta ($)': net.toFixed(2),
+      'Carritos': subCarts.length > 0 ? subCarts.length : (o.cartsCount || 1),
+      'Estado': o.status || 'Pendiente',
+      'Guía': o.trackingNumber || '',
+      'Registrado Por': o.operator || 'Francis',
+      'Notas': o.notes || ''
+    };
+  });
   const ordersWs = XLSX.utils.json_to_sheet(ordersRows.length > 0 ? ordersRows : [{ Mensaje: 'Sin pedidos' }]);
   ordersWs['!cols'] = [
-    { wch: 5 }, { wch: 28 }, { wch: 12 }, { wch: 24 }, { wch: 26 }, { wch: 16 }, { wch: 16 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 14 }
+    { wch: 5 }, { wch: 28 }, { wch: 12 }, { wch: 24 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 14 }, { wch: 25 }
   ];
-  XLSX.utils.book_append_sheet(workbook, ordersWs, 'Detalle_Todos_Los_Carritos');
+  XLSX.utils.book_append_sheet(workbook, ordersWs, 'Detalle_Pedidos');
+
+  // Hoja 4: Desglose Individual de Carritos / Correos
+  const individualCartsRows = [];
+  allOrders.forEach(o => {
+    const subCarts = Array.isArray(o.subCarts) ? o.subCarts : [];
+    if (subCarts.length > 0) {
+      subCarts.forEach((sc, idx) => {
+        individualCartsRows.push({
+          'ID Pedido': o.id,
+          'Cliente': o.clientName || '',
+          'Carrito #': idx + 1,
+          'Operadora': sc.operator || o.operator || 'Francis',
+          'Correo Utilizado': sc.email || '',
+          'Clave / PIN': sc.password || '',
+          'Monto Pagado SHEIN ($)': Number(sc.paidAmount || 0).toFixed(2),
+          'Fecha': sc.date || o.date || '',
+          'Notas / Cupón': sc.notes || ''
+        });
+      });
+    } else {
+      individualCartsRows.push({
+        'ID Pedido': o.id,
+        'Cliente': o.clientName || '',
+        'Carrito #': 1,
+        'Operadora': o.operator || 'Francis',
+        'Correo Utilizado': o.email || '',
+        'Clave / PIN': o.password || '',
+        'Monto Pagado SHEIN ($)': '0.00',
+        'Fecha': o.date || '',
+        'Notas / Cupón': o.notes || ''
+      });
+    }
+  });
+
+  const indWs = XLSX.utils.json_to_sheet(individualCartsRows.length > 0 ? individualCartsRows : [{ Mensaje: 'Sin carritos' }]);
+  indWs['!cols'] = [
+    { wch: 20 }, { wch: 24 }, { wch: 10 }, { wch: 14 }, { wch: 28 }, { wch: 16 }, { wch: 20 }, { wch: 12 }, { wch: 25 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, indWs, 'Desglose_Carritos_Correos');
 
   XLSX.writeFile(workbook, fileName);
 };
